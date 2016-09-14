@@ -1,0 +1,21 @@
+{
+    "heap": [
+        {
+          "name": "prefix",
+          "type": "org.forgerock.openig.heap.domain.PrefixBookDecorator"
+        },
+        {
+          "name": "suffix",
+          "type": "org.forgerock.openig.heap.domain.SuffixBookDecorator"
+        },
+        {
+          "name": "incompatible",
+          "type": "org.forgerock.openig.heap.domain.IncompatibleBookDecorator"
+        }
+    ],
+    "globalDecorators": {
+      "prefix": "ABCD ",
+      "suffix": " 12345",
+      "incompatible": "not used"
+    }
+}

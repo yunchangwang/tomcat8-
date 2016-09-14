@@ -1,0 +1,19 @@
+{
+    "heap": [
+        {
+            "name": "Filter",
+            "type": "StaticRequestFilter",
+            "config": {
+                "method": "GET",
+                "uri": "http://localhost"
+            }
+        },
+        {
+            "name": "capture",
+            "type": "CaptureDecorator"
+        }
+    ],
+    "globalDecorators": {
+        "capture": "all"
+    }
+}

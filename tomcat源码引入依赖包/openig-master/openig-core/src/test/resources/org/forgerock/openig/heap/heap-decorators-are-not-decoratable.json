@@ -1,0 +1,11 @@
+{
+    "heap": [
+        {
+          "name": "deco",
+          "type": "org.forgerock.openig.heap.domain.DecoratorDecorator"
+        }
+    ],
+    "globalDecorators": {
+      "deco": "..."
+    }
+}

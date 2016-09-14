@@ -1,0 +1,804 @@
+/*
+ * The contents of this file are subject to the terms of the Common Development and
+ * Distribution License (the License). You may not use this file except in compliance with the
+ * License.
+ *
+ * You can obtain a copy of the License at legal/CDDLv1.0.txt. See the License for the
+ * specific language governing permission and limitations under the License.
+ *
+ * When distributing Covered Software, include this CDDL Header Notice in each file and include
+ * the License file at legal/CDDLv1.0.txt. If applicable, add the following below the CDDL
+ * Header, with the fields enclosed by brackets [] replaced by your own identifying
+ * information: "Portions copyright [year] [name of copyright owner]".
+ *
+ * Copyright 2014-2015 ForgeRock AS.
+ */
+package org.forgerock.openig.ldap;
+
+import static org.forgerock.opendj.ldap.requests.Requests.newAddRequest;
+import static org.forgerock.opendj.ldap.requests.Requests.newCompareRequest;
+import static org.forgerock.opendj.ldap.requests.Requests.newDeleteRequest;
+import static org.forgerock.opendj.ldap.requests.Requests.newModifyDNRequest;
+import static org.forgerock.opendj.ldap.requests.Requests.newModifyRequest;
+import static org.forgerock.opendj.ldap.requests.Requests.newSearchRequest;
+import static org.forgerock.opendj.ldap.requests.Requests.newSimpleBindRequest;
+
+import java.io.Closeable;
+import java.util.Collection;
+
+import org.forgerock.opendj.ldap.Connection;
+import org.forgerock.opendj.ldap.DN;
+import org.forgerock.opendj.ldap.Entry;
+import org.forgerock.opendj.ldap.LdapException;
+import org.forgerock.opendj.ldap.SearchScope;
+import org.forgerock.opendj.ldap.controls.SubtreeDeleteRequestControl;
+import org.forgerock.opendj.ldap.requests.AddRequest;
+import org.forgerock.opendj.ldap.requests.BindRequest;
+import org.forgerock.opendj.ldap.requests.CompareRequest;
+import org.forgerock.opendj.ldap.requests.DeleteRequest;
+import org.forgerock.opendj.ldap.requests.ModifyDNRequest;
+import org.forgerock.opendj.ldap.requests.ModifyRequest;
+import org.forgerock.opendj.ldap.requests.Request;
+import org.forgerock.opendj.ldap.requests.SearchRequest;
+import org.forgerock.opendj.ldap.responses.BindResult;
+import org.forgerock.opendj.ldap.responses.CompareResult;
+import org.forgerock.opendj.ldap.responses.Result;
+import org.forgerock.opendj.ldap.responses.SearchResultEntry;
+import org.forgerock.opendj.ldap.responses.SearchResultReference;
+import org.forgerock.opendj.ldif.ConnectionEntryReader;
+import org.forgerock.services.TransactionId;
+
+import com.forgerock.opendj.ldap.controls.TransactionIdControl;
+
+/**
+ * Provides an adapted view of an OpenDJ LDAP connection exposing only the
+ * synchronous methods and protecting against future evolution of the
+ * {@link Connection} interface (e.g. migration to Promises).
+ */
+public final class LdapConnection implements Closeable {
+    private final Connection connection;
+    private final TransactionId rootTransactionId;
+
+    LdapConnection(final Connection connection) {
+        this(connection, null);
+    }
+
+    LdapConnection(final Connection connection, final TransactionId rootTransactionId) {
+        this.connection = connection;
+        this.rootTransactionId = rootTransactionId;
+    }
+
+    /**
+     * Adds an entry to the Directory Server using the provided add request.
+     *
+     * @param request The add request.
+     * @return The result of the operation.
+     * @throws LdapException If the result code indicates that the request failed for some
+     * reason.
+     * @throws UnsupportedOperationException If this connection does not support add operations.
+     * @throws IllegalStateException If this connection has already been closed, i.e. if
+     * {@code isClosed() == true}.
+     * @throws NullPointerException If {@code request} was {@code null}.
+     */
+    public Result add(AddRequest request) throws LdapException {
+        addTransactionIdControl(request);
+        return connection.add(request);
+    }
+
+    /**
+     * Adds the provided entry to the Directory Server.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * AddRequest request = newAddRequest(entry);
+     * connection.add(request);
+     * }
+     * </pre>
+     *
+     * @param entry
+     *            The entry to be added.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support add operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code entry} was {@code null} .
+     */
+    public Result add(Entry entry) throws LdapException {
+        return add(newAddRequest(entry));
+    }
+
+    /**
+     * Adds an entry to the Directory Server using the provided lines of LDIF.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * AddRequest request = newAddRequest(ldifLines);
+     * connection.add(request);
+     * }
+     * </pre>
+     *
+     * @param ldifLines
+     *            Lines of LDIF containing the an LDIF add change record or an
+     *            LDIF entry record.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support add operations.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code ldifLines} was empty, or contained invalid LDIF, or
+     *             could not be decoded using the default schema.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code ldifLines} was {@code null} .
+     */
+    public Result add(String... ldifLines) throws LdapException {
+        return add(newAddRequest(ldifLines));
+    }
+
+    /**
+     * Authenticates to the Directory Server using the provided bind request.
+     *
+     * @param request The bind request.
+     * @return The result of the operation.
+     * @throws LdapException If the result code indicates that the request failed for some
+     * reason.
+     * @throws UnsupportedOperationException If this connection does not support bind operations.
+     * @throws IllegalStateException If this connection has already been closed, i.e. if
+     * {@code isClosed() == true}.
+     * @throws NullPointerException If {@code request} was {@code null}.
+     */
+    public BindResult bind(BindRequest request) throws LdapException {
+        addTransactionIdControl(request);
+        return connection.bind(request);
+    }
+
+    /**
+     * Authenticates to the Directory Server using simple authentication and the
+     * provided user name and password.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * BindRequest request = newSimpleBindRequest(name, password);
+     * connection.bind(request);
+     * }
+     * </pre>
+     *
+     * @param name
+     *            The distinguished name of the Directory object that the client
+     *            wishes to bind as, which may be empty.
+     * @param password
+     *            The password of the Directory object that the client wishes to
+     *            bind as, which may be empty.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code name} could not be decoded using the default
+     *             schema.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support bind operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code name} or {@code password} was {@code null}.
+     */
+    public BindResult bind(String name, char[] password) throws LdapException {
+        return bind(newSimpleBindRequest(name, password));
+    }
+
+    /**
+     * Releases any resources associated with this connection. For physical
+     * connections to a Directory Server this will mean that an unbind request
+     * is sent and the underlying socket is closed.
+     * <p>
+     * Other connection implementations may behave differently, and may choose
+     * not to send an unbind request if its use is inappropriate (for example a
+     * pooled connection will be released and returned to its connection pool
+     * without ever issuing an unbind request).
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * UnbindRequest request = new UnbindRequest();
+     * connection.close(request);
+     * }
+     * </pre>
+     * <p>
+     * Calling {@code close} on a connection that is already closed has no
+     * effect.
+     *
+     * @see org.forgerock.opendj.ldap.Connections#uncloseable(Connection)
+     */
+    @Override
+    public void close() {
+        connection.close();
+    }
+
+    /**
+     * Compares an entry in the Directory Server using the provided compare
+     * request.
+     *
+     * @param request The compare request.
+     * @return The result of the operation.
+     * @throws LdapException If the result code indicates that the request failed for some
+     * reason.
+     * @throws UnsupportedOperationException If this connection does not support compare operations.
+     * @throws IllegalStateException If this connection has already been closed, i.e. if
+     * {@code isClosed() == true}.
+     * @throws NullPointerException If {@code request} was {@code null}.
+     */
+    public CompareResult compare(CompareRequest request) throws LdapException {
+        addTransactionIdControl(request);
+        return connection.compare(request);
+    }
+
+    /**
+     * Compares the named entry in the Directory Server against the provided
+     * attribute value assertion.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * CompareRequest request = newCompareRequest(name, attributeDescription, assertionValue);
+     * connection.compare(request);
+     * }
+     * </pre>
+     *
+     * @param name
+     *            The distinguished name of the entry to be compared.
+     * @param attributeDescription
+     *            The name of the attribute to be compared.
+     * @param assertionValue
+     *            The assertion value to be compared.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code name} or {@code AttributeDescription} could not be
+     *             decoded using the default schema.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support compare operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code name}, {@code attributeDescription}, or
+     *             {@code assertionValue} was {@code null}.
+     */
+    public CompareResult compare(String name, String attributeDescription, String assertionValue)
+            throws LdapException {
+        return compare(newCompareRequest(name, attributeDescription, assertionValue));
+    }
+
+    /**
+     * Deletes an entry from the Directory Server using the provided delete
+     * request.
+     *
+     * @param request The delete request.
+     * @return The result of the operation.
+     * @throws LdapException If the result code indicates that the request failed for some
+     * reason.
+     * @throws UnsupportedOperationException If this connection does not support delete operations.
+     * @throws IllegalStateException If this connection has already been closed, i.e. if
+     * {@code isClosed() == true}.
+     * @throws NullPointerException If {@code request} was {@code null}.
+     */
+    public Result delete(DeleteRequest request) throws LdapException {
+        addTransactionIdControl(request);
+        return connection.delete(request);
+    }
+
+    /**
+     * Deletes the named entry from the Directory Server.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * DeleteRequest request = newDeleteRequest(name);
+     * connection.delete(request);
+     * }
+     * </pre>
+     *
+     * @param name
+     *            The distinguished name of the entry to be deleted.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code name} could not be decoded using the default
+     *             schema.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support delete operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code name} was {@code null}.
+     */
+    public Result delete(String name) throws LdapException {
+        return delete(newDeleteRequest(name));
+    }
+
+    /**
+     * Deletes the named entry and all of its subordinates from the Directory
+     * Server.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * DeleteRequest request = newDeleteRequest(name).addControl(SubtreeDeleteRequestControl.newControl(true)));
+     * connection.delete(request);
+     * }
+     * </pre>
+     *
+     * @param name
+     *            The distinguished name of the subtree base entry to be
+     *            deleted.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code name} could not be decoded using the default
+     *             schema.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support delete operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code name} was {@code null}.
+     */
+    public Result deleteSubtree(String name) throws LdapException {
+        return delete(newDeleteRequest(name).addControl(SubtreeDeleteRequestControl.newControl(true)));
+    }
+
+    /**
+     * Modifies an entry in the Directory Server using the provided modify
+     * request.
+     *
+     * @param request The modify request.
+     * @return The result of the operation.
+     * @throws LdapException If the result code indicates that the request failed for some
+     * reason.
+     * @throws UnsupportedOperationException If this connection does not support modify operations.
+     * @throws IllegalStateException If this connection has already been closed, i.e. if
+     * {@code isClosed() == true}.
+     * @throws NullPointerException If {@code request} was {@code null}.
+     */
+    public Result modify(ModifyRequest request) throws LdapException {
+        addTransactionIdControl(request);
+        return connection.modify(request);
+    }
+
+    /**
+     * Modifies an entry in the Directory Server using the provided lines of
+     * LDIF.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * ModifyRequest request = newModifyRequest(ldifLines);
+     * connection.modify(request);
+     * }
+     * </pre>
+     *
+     * @param ldifLines
+     *            Lines of LDIF containing the a single LDIF modify change
+     *            record.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support modify operations.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code ldifLines} was empty, or contained invalid LDIF, or
+     *             could not be decoded using the default schema.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code ldifLines} was {@code null} .
+     */
+    public Result modify(String... ldifLines) throws LdapException {
+        return modify(newModifyRequest(ldifLines));
+    }
+
+    /**
+     * Renames an entry in the Directory Server using the provided modify DN
+     * request.
+     *
+     * @param request The modify DN request.
+     * @return The result of the operation.
+     * @throws LdapException If the result code indicates that the request failed for some
+     * reason.
+     * @throws UnsupportedOperationException If this connection does not support modify DN operations.
+     * @throws IllegalStateException If this connection has already been closed, i.e. if
+     * {@code isClosed() == true}.
+     * @throws NullPointerException If {@code request} was {@code null}.
+     */
+    public Result modifyDN(ModifyDNRequest request) throws LdapException {
+        addTransactionIdControl(request);
+        return connection.modifyDN(request);
+    }
+
+    /**
+     * Renames the named entry in the Directory Server using the provided new
+     * RDN.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * ModifyDNRequest request = newModifyDNRequest(name, newRDN);
+     * connection.modifyDN(request);
+     * }
+     * </pre>
+     *
+     * @param name
+     *            The distinguished name of the entry to be renamed.
+     * @param newRDN
+     *            The new RDN of the entry.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code name} or {@code newRDN} could not be decoded using
+     *             the default schema.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support modify DN operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code name} or {@code newRDN} was {@code null}.
+     */
+    public Result modifyDN(String name, String newRDN) throws LdapException {
+        return modifyDN(newModifyDNRequest(name, newRDN));
+    }
+
+    /**
+     * Reads the named entry from the Directory Server.
+     * <p>
+     * If the requested entry is not returned by the Directory Server then the
+     * request will fail with an {@link org.forgerock.opendj.ldap.EntryNotFoundException}. More
+     * specifically, this method will never return {@code null}.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * SearchRequest request =
+     *         new SearchRequest(name, SearchScope.BASE_OBJECT, &quot;(objectClass=*)&quot;, attributeDescriptions);
+     * connection.searchSingleEntry(request);
+     * }
+     * </pre>
+     *
+     * @param name
+     *            The distinguished name of the entry to be read.
+     * @param attributeDescriptions
+     *            The names of the attributes to be included with the entry,
+     *            which may be {@code null} or empty indicating that all user
+     *            attributes should be returned.
+     * @return The single search result entry returned from the search.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support search operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If the {@code name} was {@code null}.
+     */
+    public SearchResultEntry readEntry(DN name, String... attributeDescriptions)
+            throws LdapException {
+        return connection.readEntry(name, attributeDescriptions);
+    }
+
+    /**
+     * Reads the named entry from the Directory Server.
+     * <p>
+     * If the requested entry is not returned by the Directory Server then the
+     * request will fail with an {@link org.forgerock.opendj.ldap.EntryNotFoundException}. More
+     * specifically, this method will never return {@code null}.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * SearchRequest request =
+     *         new SearchRequest(name, SearchScope.BASE_OBJECT, &quot;(objectClass=*)&quot;, attributeDescriptions);
+     * connection.searchSingleEntry(request);
+     * }
+     * </pre>
+     *
+     * @param name
+     *            The distinguished name of the entry to be read.
+     * @param attributeDescriptions
+     *            The names of the attributes to be included with the entry.
+     * @return The single search result entry returned from the search.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code baseObject} could not be decoded using the default
+     *             schema.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support search operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If the {@code name} was {@code null}.
+     */
+    public SearchResultEntry readEntry(String name, String... attributeDescriptions)
+            throws LdapException {
+        return connection.readEntry(name, attributeDescriptions);
+    }
+
+    /**
+     * Searches the Directory Server using the provided search parameters. Any
+     * matching entries returned by the search will be exposed through the
+     * returned {@code ConnectionEntryReader}.
+     * <p>
+     * Unless otherwise specified, calling this method is equivalent to:
+     *
+     * <pre>
+     * {@code
+     * ConnectionEntryReader reader = new ConnectionEntryReader(this, request);
+     * }
+     * </pre>
+     *
+     * @param request
+     *            The search request.
+     * @return The result of the operation.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support search operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code request} or {@code entries} was {@code null}.
+     */
+    public ConnectionEntryReader search(SearchRequest request) {
+        addTransactionIdControl(request);
+        return connection.search(request);
+    }
+
+    /**
+     * Searches the Directory Server using the provided search request. Any
+     * matching entries returned by the search will be added to {@code entries},
+     * even if the final search result indicates that the search failed. Search
+     * result references will be discarded.
+     * <p>
+     * <b>Warning:</b> Usage of this method is discouraged if the search request
+     * is expected to yield a large number of search results since the entire
+     * set of results will be stored in memory, potentially causing an
+     * {@code OutOfMemoryError}.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * connection.search(request, entries, null);
+     * }
+     * </pre>
+     *
+     * @param request
+     *            The search request.
+     * @param entries
+     *            The collection to which matching entries should be added.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support search operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code request} or {@code entries} was {@code null}.
+     */
+    public Result search(SearchRequest request, Collection<? super SearchResultEntry> entries)
+            throws LdapException {
+        addTransactionIdControl(request);
+        return connection.search(request, entries);
+    }
+
+    /**
+     * Searches the Directory Server using the provided search request. Any
+     * matching entries returned by the search will be added to {@code entries},
+     * even if the final search result indicates that the search failed.
+     * Similarly, search result references returned by the search will be added
+     * to {@code references}.
+     * <p>
+     * <b>Warning:</b> Usage of this method is discouraged if the search request
+     * is expected to yield a large number of search results since the entire
+     * set of results will be stored in memory, potentially causing an
+     * {@code OutOfMemoryError}.
+     *
+     * @param request
+     *            The search request.
+     * @param entries
+     *            The collection to which matching entries should be added.
+     * @param references
+     *            The collection to which search result references should be
+     *            added, or {@code null} if references are to be discarded.
+     * @return The result of the operation.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support search operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If {@code request} or {@code entries} was {@code null}.
+     */
+    public Result search(SearchRequest request, Collection<? super SearchResultEntry> entries,
+                         Collection<? super SearchResultReference> references) throws LdapException {
+        addTransactionIdControl(request);
+        return connection.search(request, entries, references);
+    }
+
+    /**
+     * Searches the Directory Server using the provided search parameters. Any
+     * matching entries returned by the search will be exposed through the
+     * {@code EntryReader} interface.
+     * <p>
+     * <b>Warning:</b> When using a queue with an optional capacity bound, the
+     * connection will stop reading responses and wait if necessary for space to
+     * become available.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * SearchRequest request = new SearchRequest(baseDN, scope, filter, attributeDescriptions);
+     * connection.search(request, new LinkedBlockingQueue&lt;Response&gt;());
+     * }
+     * </pre>
+     *
+     * @param baseObject
+     *            The distinguished name of the base entry relative to which the
+     *            search is to be performed.
+     * @param scope
+     *            The scope of the search.
+     * @param filter
+     *            The filter that defines the conditions that must be fulfilled
+     *            in order for an entry to be returned.
+     * @param attributeDescriptions
+     *            The names of the attributes to be included with each entry.
+     * @return An entry reader exposing the returned entries.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support search operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If the {@code baseObject}, {@code scope}, or {@code filter}
+     *             were {@code null}.
+     */
+    public ConnectionEntryReader search(String baseObject, SearchScope scope, String filter,
+                                        String... attributeDescriptions) {
+        return search(newSearchRequest(baseObject, scope, filter, attributeDescriptions));
+    }
+
+    /**
+     * Searches the Directory Server for a single entry using the provided
+     * search request.
+     * <p>
+     * If the requested entry is not returned by the Directory Server then the
+     * request will fail with an {@link org.forgerock.opendj.ldap.EntryNotFoundException}. More
+     * specifically, this method will never return {@code null}. If multiple
+     * matching entries are returned by the Directory Server then the request
+     * will fail with an {@link org.forgerock.opendj.ldap.MultipleEntriesFoundException}.
+     *
+     * @param request
+     *            The search request.
+     * @return The single search result entry returned from the search.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support search operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If the {@code request} was {@code null}.
+     */
+    public SearchResultEntry searchSingleEntry(SearchRequest request) throws LdapException {
+        addTransactionIdControl(request);
+        return connection.searchSingleEntry(request);
+    }
+
+    /**
+     * Searches the Directory Server for a single entry using the provided
+     * search parameters.
+     * <p>
+     * If the requested entry is not returned by the Directory Server then the
+     * request will fail with an {@link org.forgerock.opendj.ldap.EntryNotFoundException}. More
+     * specifically, this method will never return {@code null}. If multiple
+     * matching entries are returned by the Directory Server then the request
+     * will fail with an {@link org.forgerock.opendj.ldap.MultipleEntriesFoundException}.
+     * <p>
+     * This method is equivalent to the following code:
+     *
+     * <pre>
+     * {@code
+     * SearchRequest request = new SearchRequest(baseObject, scope, filter, attributeDescriptions);
+     * connection.searchSingleEntry(request);
+     * }
+     * </pre>
+     *
+     * @param baseObject
+     *            The distinguished name of the base entry relative to which the
+     *            search is to be performed.
+     * @param scope
+     *            The scope of the search.
+     * @param filter
+     *            The filter that defines the conditions that must be fulfilled
+     *            in order for an entry to be returned.
+     * @param attributeDescriptions
+     *            The names of the attributes to be included with each entry.
+     * @return The single search result entry returned from the search.
+     * @throws LdapException
+     *             If the result code indicates that the request failed for some
+     *             reason.
+     * @throws org.forgerock.i18n.LocalizedIllegalArgumentException
+     *             If {@code baseObject} could not be decoded using the default
+     *             schema or if {@code filter} is not a valid LDAP string
+     *             representation of a filter.
+     * @throws UnsupportedOperationException
+     *             If this connection does not support search operations.
+     * @throws IllegalStateException
+     *             If this connection has already been closed, i.e. if
+     *             {@code isClosed() == true}.
+     * @throws NullPointerException
+     *             If the {@code baseObject}, {@code scope}, or {@code filter}
+     *             were {@code null}.
+     */
+    public SearchResultEntry searchSingleEntry(String baseObject, SearchScope scope, String filter,
+                                               String... attributeDescriptions) throws LdapException {
+        return searchSingleEntry(newSearchRequest(baseObject, scope, filter, attributeDescriptions));
+    }
+
+    private void addTransactionIdControl(Request request) {
+        if (rootTransactionId != null && !request.containsControl(TransactionIdControl.OID)) {
+            request.addControl(TransactionIdControl.newControl(rootTransactionId.createSubTransactionId().getValue()));
+        }
+    }
+
+}

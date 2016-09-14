@@ -1,0 +1,10 @@
+{
+    "heap": [
+        {
+            "name": "Detection",
+            "type": "org.forgerock.openig.handler.router.DestroyDetectHandler"
+        }
+    ],
+    "handler": "Detection",
+    "condition": "${attributes.test == 'Destroy'}"
+}

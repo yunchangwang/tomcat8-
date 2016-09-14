@@ -1,0 +1,173 @@
+/*
+ * The contents of this file are subject to the terms of the Common Development and
+ * Distribution License (the License). You may not use this file except in compliance with the
+ * License.
+ *
+ * You can obtain a copy of the License at legal/CDDLv1.0.txt. See the License for the
+ * specific language governing permission and limitations under the License.
+ *
+ * When distributing Covered Software, include this CDDL Header Notice in each file and include
+ * the License file at legal/CDDLv1.0.txt. If applicable, add the following below the CDDL
+ * Header, with the fields enclosed by brackets [] replaced by your own identifying
+ * information: "Portions Copyright [year] [name of copyright owner]".
+ *
+ * Copyright 2010-2011 ApexIdentity Inc.
+ * Portions Copyright 2011-2016 ForgeRock AS.
+ */
+
+package org.forgerock.openig.resolver;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.forgerock.http.util.Loader;
+
+/**
+ * Performs object resolution by object type. A given object may have more than
+ * one resolver, depending on what class it extends and/or interfaces it
+ * implements, or what its superclasses and interfaces are.
+ */
+public final class Resolvers {
+
+    /**
+     * Resolver that handles native arrays (not handled like the service-based
+     * resolvers).
+     */
+    private static final List<Resolver> ARRAY_RESOLVER = Collections.unmodifiableList(Arrays
+            .asList((Resolver) new ArrayResolver()));
+
+    /** Mapping of supported classes to associated resolvers. */
+    @SuppressWarnings("rawtypes")
+    public static final Map<Class, Resolver> SERVICES = Collections.unmodifiableMap(Loader.loadMap(
+            Class.class, Resolver.class));
+
+    /** Static methods only. */
+    private Resolvers() {
+    }
+
+    /**
+     * Provides an iterable object over the resolvers that are appropriate for a
+     * particular object. Resolvers are provided ordered from most specific to
+     * class/interface to least. Resolvers are provided through an iterator
+     * interface to avoid the overhead of determining all resolvers in advance.
+     *
+     * @param object the object for which a set of resolvers is being sought.
+     * @return an object that returns an iterator over the set of resolvers for
+     * the object.
+     */
+    public static Iterable<Resolver> resolvers(final Object object) {
+        return new Iterable<Resolver>() {
+            public Iterator<Resolver> iterator() {
+                return (object.getClass().isArray() ? ARRAY_RESOLVER.iterator() : new Iterator<Resolver>() {
+                    Class<?> class1 = object.getClass();
+                    Class<?> class2 = class1;
+                    Iterator<Class<?>> interfaces = null;
+                    int n = 0;
+
+                    public boolean hasNext() {
+                        // interface hierarchy not yet exhausted
+                        return (class2 != null);
+                    }
+
+                    public Resolver next() {
+                        while (class1 != null) {
+                            // class hierarchy
+                            Resolver resolver = SERVICES.get(class1);
+                            class1 = class1.getSuperclass();
+                            if (resolver != null) {
+                                return resolver;
+                            }
+                        }
+                        // exhausted class hierarchy
+                        class1 = null;
+                        while (class2 != null && class2 != Object.class) {
+                            // interface hierarchy
+                            if (interfaces != null && interfaces.hasNext()) {
+                                Resolver resolver = SERVICES.get(interfaces.next());
+                                if (resolver != null) {
+                                    return resolver;
+                                }
+                            } else {
+                                List<Class<?>> list = getInterfaces(class2, n++);
+                                if (list.size() > 0) {
+                                    interfaces = list.iterator();
+                                } else {
+                                    class2 = class2.getSuperclass();
+                                    n = 0;
+                                }
+                            }
+                        }
+                        // exhausted interface hierarchy
+                        class2 = null;
+                        return BeanResolver.INSTANCE;
+                    }
+
+                    public void remove() {
+                        throw new UnsupportedOperationException();
+                    }
+                });
+            }
+        };
+    }
+
+    /**
+     * Attempts to resolve an element of an object.
+     *
+     * @param object the object in which to resolve the specified element.
+     * @param element the element to resolve within the specified object.
+     * @return the value of the resolved element, or {@link Resolver#UNRESOLVED
+     * UNRESOLVED} if it cannot be resolved.
+     * @see Resolver#get(Object, Object)
+     */
+    public static Object get(Object object, Object element) {
+        for (Resolver resolver : resolvers(object)) {
+            Object value = resolver.get(object, element);
+            if (value != Resolver.UNRESOLVED) {
+                // first hit wins
+                return value;
+            }
+        }
+        return Resolver.UNRESOLVED;
+    }
+
+    /**
+     * Attempts to set the value of an element of an object.
+     *
+     * @param object the object in which to resolve the specified element.
+     * @param element the element within the specified object whose value is to be
+     * set.
+     * @param value the value to set the element to.
+     * @return the previous value of the element, {@code null} if no previous
+     * value, or {@link Resolver#UNRESOLVED UNRESOLVED} if it cannot be
+     * resolved.
+     * @see Resolver#put(Object, Object, Object)
+     */
+    public static Object put(Object object, Object element, Object value) {
+        for (Resolver resolver : resolvers(object)) {
+            Object resolved = resolver.put(object, element, value);
+            if (resolved != Resolver.UNRESOLVED) {
+                // first hit wins
+                return resolved;
+            }
+        }
+        return Resolver.UNRESOLVED;
+    }
+
+    private static List<Class<?>> getInterfaces(Class<?> c, int level) {
+        List<Class<?>> interfaces;
+        if (level == 0) {
+            interfaces = Arrays.asList(c.getInterfaces());
+        } else {
+            interfaces = new ArrayList<>();
+            for (Class<?> iface : c.getInterfaces()) {
+                // recursion
+                interfaces.addAll(getInterfaces(iface, level - 1));
+            }
+        }
+        return interfaces;
+    }
+}

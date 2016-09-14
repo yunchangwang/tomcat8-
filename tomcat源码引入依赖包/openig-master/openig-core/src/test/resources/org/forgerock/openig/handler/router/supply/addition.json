@@ -1,0 +1,13 @@
+{
+    "heap": [
+        {
+            "name": "StatusHandler",
+            "type": "org.forgerock.openig.handler.router.StatusHandler",
+            "config": {
+                "status": 404
+            }
+        }
+    ],
+    "handler": "StatusHandler",
+    "condition": "${attributes.name == 'OpenAM'}"
+}

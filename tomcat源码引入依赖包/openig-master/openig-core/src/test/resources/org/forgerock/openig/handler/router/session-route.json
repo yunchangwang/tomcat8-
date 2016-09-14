@@ -1,0 +1,17 @@
+{
+    "heap": [
+        {
+            "name": "Endpoint",
+            "type": "org.forgerock.openig.handler.router.RouteBuilderTest$SessionHandler",
+            "config": {
+            }
+        },
+        {
+            "name": "Jwt",
+            "type": "JwtSession"
+        }
+
+    ],
+    "handler": "Endpoint",
+    "session": "Jwt"
+}

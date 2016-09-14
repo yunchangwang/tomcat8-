@@ -1,0 +1,12 @@
+{
+    "heap": [
+        {
+            "name": "StatusHandler",
+            "type": "org.forgerock.openig.handler.router.StatusHandler",
+            "config": {
+                "status": 418
+            }
+        }
+    ],
+    "handler": "StatusHandler"
+}
